@@ -4,54 +4,65 @@ import numpy as np
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from scipy.spatial.distance import cosine
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+import utils.util
 
-# 初始化 MTCNN 和 InceptionResnetV1
+# 检测设备
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print('Running on device: {}'.format(torch.cuda.get_device_name(0)))
+
+# Initialize MTCNN and InceptionResnetV1
 mtcnn = MTCNN(keep_all=True, device=device)
 resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
-# 载入之前保存的特征向量
-saved_embeddings = np.load('face_embeddings.npy')
-
+# Load previously saved feature vectors
+saved_embeddings = np.load('imgs_info/npy/imgs_embeddings.npy')
+print(saved_embeddings.shape)
 camera = cv2.VideoCapture(0)
-
+# Load names
+names = utils.util.read_txt('imgs_info/person_names.txt')
+print(names)
 try:
     while True:
-        # 从摄像头读取一帧
+        # Read a frame from the camera
         ret, frame = camera.read()
         if not ret:
             break
 
-        # 检测人脸
+        # Detect faces
         boxes, _ = mtcnn.detect(frame)
 
         if boxes is not None:
-            faces = mtcnn(frame)
+            # Extract face tensors
+            faces = mtcnn.extract(frame, boxes, save_path=None)
             if faces is not None:
+                # Move faces to the correct device
+                faces = faces.to(device)
+                # Get embeddings
                 new_embeddings = resnet(faces).detach().cpu().numpy()
 
-                # 对每一个检测到的人脸进行比较
+                # Compare each detected face with saved embeddings
                 for i, new_embedding in enumerate(new_embeddings):
-                    # 计算与已保存特征向量的余弦距离
+                    # Calculate cosine distance
                     distances = [cosine(new_embedding, emb) for emb in saved_embeddings]
                     min_distance = min(distances)
                     min_index = distances.index(min_distance)
 
-                    # 设定阈值和显示匹配结果
-                    if min_distance < 0.2:
-                        match_message = f"Match found: Distance {min_distance:.2f} at index {min_index}"
+                    # Set a threshold and display match results
+                    if min_distance < 0.3:
+                        match_message = f"{names[min_index]}  Distance:{min_distance:.2f} "
                     else:
                         match_message = "No match found"
 
-                    # 在视频中标出人脸和匹配结果
+                    # Draw bounding boxes and match results on the frame
                     box = boxes[i]
                     cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
-                    cv2.putText(frame, match_message, (int(box[0]), int(box[1])-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.putText(frame, match_message, (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                (0, 255, 0), 2)
 
-        # 显示结果
+        # Display the result
         cv2.imshow('Face Detection and Recognition', frame)
 
-        # 按 'q' 退出
+        # Exit on 'q' key press
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 finally:
